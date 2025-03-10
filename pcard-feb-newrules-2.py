@@ -1,0 +1,771 @@
+# %%
+
+import duckdb
+from duckdb.typing import BOOLEAN, VARCHAR
+
+# %%
+
+suppliersFile = "./files/oracle suppliers for prama.csv"
+outputFile = "./files/pcard_monthly_output_jan24.csv"
+outputExcelFile = "./files/pcard_monthly_output_jan24.xlsx"
+monthlyTransactionsFile = "./files/1.31.24-Monthly_w_GLInternal_Audit_Record.xlsx"
+cardLimitsMappingsFile = "./files/Pcard Mapping-updated 2.2.24.xlsx"
+otherMappingsFile = "./files/Regions Monthly_w_GLRevised_Record 2022-2023-Updated.xlsx"
+
+# %%
+
+exceptionsList = [
+    "	Adult	",
+    "	Appliances	",
+    "	Artwork	",
+    "	Bail	",
+    "	Bars	",
+    "	Beauty	",
+    "	Betting	",
+    "	Cash	",
+    "	Casino	",
+    "	Club	",
+    "	Computer	",
+    "	Concert	",
+    "	Designer	",
+    "	Dining	",
+    "	Donation	",
+    "	Electronics	",
+    "	Entertainment	",
+    "	Fine	",
+    "	Firearms	",
+    "	Fragrance	",
+    "	Furniture	",
+    "	Gaming	",
+    "	Hobby	",
+    "	Insurance	",
+    "	Interest	",
+    "	Jewelry	",
+    "	Late	",
+    "	Legal	",
+    "	Leisure	",
+    "	Lingerie	",
+    "	Loan	",
+    "	Lottery	",
+    "	Luxury	",
+    "	Massage	",
+    "	Medical	",
+    "	Membership	",
+    "	Missing	",
+    "	Nightclub	",
+    "	Packages	",
+    "	Penalty	",
+    "	Personal	",
+    "	Pet	",
+    "	Political	",
+    "	Renewal	",
+    "	Repairs	",
+    "	Spa	",
+    "	Sports	",
+    "	Storage	",
+    "	Streaming	",
+    "	Subscription	",
+    "	Ticket	",
+    "	Tobacco	",
+    "	Vacation	",
+    "	Vehicle	",
+    "	Withdrawal	",
+]
+
+# "Travel" only for campuses - not for home office or others
+
+cleanExceptionsList = []
+
+for i in exceptionsList:
+    cleanExceptionsList.append(i.strip().lower())
+
+# %%
+con = duckdb.connect()
+
+con.sql("INSTALL spatial;")
+con.sql("LOAD spatial;")
+
+# %%
+
+# load pcard monthly transactions
+
+con.sql(
+    f"""CREATE TABLE pcard_monthly AS SELECT * FROM st_read('{monthlyTransactionsFile}', open_options=['HEADERS=FORCE']);"""
+)
+
+print(con.sql("SELECT COUNT(*) FROM pcard_monthly"))
+
+# %%
+
+print(con.sql("DESCRIBE pcard_monthly"))
+
+# ##
+
+print(con.sql(""" SELECT DISTINCT "Company Name" from pcard_monthly """))
+
+# %%
+
+print(con.sql(""" SELECT DISTINCT "Cost Center" from pcard_monthly """))
+
+
+# %%
+
+column_name_mappings = [
+    ("Company Name", "Company.Company Legal Name"),
+    ("Hierarchy Name", "Company Unit.Hierarchy Name"),
+    ("GL Account", "Financial Codes.General Ledger Code"),
+    ("Note", "Transaction User Defined.Note"),
+    ("Split Description", "Transaction Splits.Split Description"),
+    ("Cost Center", "Financial Codes.Cost Center Code"),
+    ("Project Code", "Financial Codes.Project Code"),
+    ("Split Amount", "Transaction Splits.Split Amount"),
+    ("Merchant", "Transaction.Merchant Name"),
+    ("Post Date", "Transaction.Posting Dt"),
+    ("Receipts", "Transaction.Receipts"),
+    ("Review Date", "Transaction.Review Date"),
+    ("Approve Date", "Transaction.Approved Dt"),
+    ("Approve 2 Date", "Transaction.Approved2 Dt"),
+    ("In Envelope", "Transaction.In Envelope"),
+    ("First Name", "Cardholder.First Name"),
+    ("Last Name", "Cardholder.Last Name"),
+    ("SIC MCC CD", "Transaction.SIC Merchant Category Code CD"),
+    ("Transaction Date", "Transaction.Transaction Dt"),
+]
+
+# %%
+
+for c in column_name_mappings:
+    con.sql(
+        "ALTER TABLE pcard_monthly RENAME COLUMN "
+        + f"'{c[0]}'"
+        + " TO "
+        + f"'{c[1]}'"
+        + ";"
+    )
+
+# %%
+
+print(con.sql("DESCRIBE pcard_monthly"))
+
+# ##
+
+print(con.sql(""" SELECT DISTINCT "Company.Company Legal Name" from pcard_monthly """))
+
+# %%
+
+print(
+    con.sql(
+        """ SELECT DISTINCT "Financial Codes.Cost Center Code" from pcard_monthly """
+    )
+)
+
+
+# %%
+
+# load department to location mapping
+
+con.sql(
+    f"""CREATE TABLE dept_loc AS SELECT * FROM st_read("{otherMappingsFile}", layer = 'Mapping -Dept-Loc', open_options=['HEADERS=FORCE']);"""
+)
+
+print(con.sql("SELECT COUNT(*) FROM dept_loc"))
+
+print(con.sql("DESCRIBE dept_loc"))
+
+# %%
+
+# load account number to name mapping
+
+con.sql(
+    f"""CREATE TABLE acct_number_name AS SELECT * FROM st_read("{otherMappingsFile}", layer = 'Mapping - Acct #', open_options=['HEADERS=FORCE']);"""
+)
+
+print(con.sql("SELECT COUNT(*) FROM acct_number_name"))
+
+print(con.sql("DESCRIBE acct_number_name"))
+
+# %%
+
+# load card limits
+
+con.sql(
+    f"""CREATE TABLE card_limits AS SELECT * FROM st_read("{cardLimitsMappingsFile}", layer = 'Mapping - Card Limits-Loc-Categ', open_options=['HEADERS=FORCE']);"""
+)
+
+# %%
+
+print(con.sql("SELECT COUNT(*) FROM card_limits"))
+
+print(con.sql("DESCRIBE card_limits"))
+
+# %%
+
+con.sql(
+    """UPDATE card_limits SET "Credit Limit" = regexp_replace("Credit Limit",'US', '', 'g') """
+)
+
+con.commit()
+
+# %%
+
+con.sql(
+    """UPDATE card_limits SET "Current Balance" = regexp_replace("Current Balance",'US', '', 'g') """
+)
+
+con.commit()
+
+# %%
+
+con.sql(
+    """UPDATE card_limits SET "Current Statement" = regexp_replace("Current Statement",'US', '', 'g') """
+)
+
+con.commit()
+
+# %%
+con.sql("""select "Credit Limit" from card_limits limit 5""")
+
+# %%
+
+print(con.sql(""" SELECT DISTINCT "Credit Limit" from card_limits """))
+
+
+# %%
+
+print(con.sql("SELECT COUNT(*) FROM card_limits"))
+
+print(con.sql("DESCRIBE card_limits"))
+
+# %% load suppliers list
+
+con.sql(f"""CREATE TABLE suppliers_list AS SELECT * FROM st_read("{suppliersFile}");""")
+
+print(con.sql("SELECT COUNT(*) FROM suppliers_list"))
+
+print(con.sql("DESCRIBE suppliers_list"))
+
+# %%
+
+con.sql("SELECT distinct SUPPLIER_TYPE  from suppliers_list")
+
+
+# %%
+
+res = con.sql("""SELECT distinct("Transaction.Merchant Name") from pcard_monthly""")
+
+results = res.fetchall()
+for r in results:
+    print(r)
+
+
+# %%
+    
+# Testing new logic...
+    
+con.sql(
+    """
+CREATE TABLE new_logic_tests_1 AS 
+SELECT  t.*
+FROM    pcard_monthly t
+"""
+)
+
+
+# %%
+
+r = con.sql(
+    """
+ALTER TABLE new_logic_tests_1 ADD COLUMN FN_LN_1 STRING DEFAULT ' '
+"""
+)
+
+con.commit()
+
+print(r)
+
+# %%
+
+r = con.sql("""
+ UPDATE new_logic_tests_1 SET FN_LN_1 = "Cardholder.First Name" || ' ' || "Cardholder.Last Name"
+""")
+
+con.commit()
+
+print(r)
+
+# %%
+
+r = con.sql("""
+ UPDATE new_logic_tests_1 SET FN_LN_1 = replace(FN_LN_1, 'N/A ', '')
+""")
+
+con.commit()
+
+print(r)
+
+# %%
+
+r = con.sql(
+    """
+ALTER TABLE new_logic_tests_1 ADD COLUMN MAP_COUNT INTEGER DEFAULT -1
+"""
+)
+
+# %%
+
+r = con.sql("""
+UPDATE new_logic_tests_1 SET MAP_COUNT = (SELECT COUNT(*) FROM card_limits cl WHERE FN_LN_1 = replace(cl."First Name" || ' ' || cl."Last Name", 'N/A ', ''))
+""")
+
+
+# %%
+
+print(con.sql("select * from new_logic_tests_1 limit 5"))
+
+# %%
+
+con.sql("""COPY new_logic_tests_1 TO './files/test_out.csv' (HEADER, DELIMITER ',');""")
+
+
+# %%
+
+# join transactions to department location mapping
+
+con.sql(
+    """
+CREATE TABLE clean_transactions_1 AS 
+SELECT  t.*, m.* 
+FROM    pcard_monthly t
+LEFT JOIN dept_loc m
+    ON  t."Financial Codes.Project Code" = m."Financial Codes.Project Code"
+"""
+)
+
+# %%
+
+con.sql(
+    """
+UPDATE clean_transactions_1
+    SET "Financial Codes.Project Code" = '0' WHERE "Financial Codes.Project Code" = 'N/A'
+"""
+)
+
+con.commit()
+
+# %%
+
+con.sql(
+    """
+UPDATE clean_transactions_1
+    SET "Transaction Splits.Split Amount" = '0.00' WHERE "Transaction Splits.Split Amount" IS NULL OR "Transaction Splits.Split Amount" = '' OR "Transaction Splits.Split Amount" = ' '
+"""
+)
+
+con.commit()
+
+# %%
+
+con.sql(
+    """
+ALTER TABLE clean_transactions_1 ALTER "Transaction Splits.Split Amount" TYPE DECIMAL;    
+"""
+)
+
+con.commit()
+
+# %%
+
+r = con.sql(
+    """
+ALTER TABLE clean_transactions_1 ADD COLUMN AmountIsWholeNumber BOOLEAN DEFAULT False
+"""
+)
+
+con.commit()
+
+print(r)
+
+# %%
+
+r = con.sql(
+    """
+UPDATE clean_transactions_1 
+    SET AmountIsWholeNumber = (CASE WHEN "Transaction Splits.Split Amount" = floor("Transaction Splits.Split Amount") THEN True ELSE False END)
+"""
+)
+
+con.commit()
+
+print(r)
+
+
+# %%
+
+res = con.sql(
+    """SELECT AmountIsWholeNumber, count(*) from clean_transactions_1 
+    GROUP BY AmountIsWholeNumber
+    ORDER BY count(*);
+    """
+)
+
+con.commit()
+
+print(res)
+
+# %%
+
+print(con.sql("SELECT COUNT(*) FROM clean_transactions_1"))
+
+print(con.sql("DESCRIBE clean_transactions_1"))
+
+# %%
+
+r = con.sql(
+    """
+SELECT "Financial Codes.General Ledger Code", CASE WHEN len(string_split("Financial Codes.General Ledger Code", '-')) > 1 THEN string_split("Financial Codes.General Ledger Code", '-')[2] ELSE "Financial Codes.General Ledger Code" END AS test FROM clean_transactions_1;
+"""
+)
+
+print(r)
+
+# %%
+
+r = con.sql(
+    """
+ALTER TABLE clean_transactions_1 ADD COLUMN AcctNum STRING DEFAULT 0
+"""
+)
+
+print(r)
+
+# %%
+
+r = con.sql(
+    """
+UPDATE clean_transactions_1 
+    SET AcctNum = (CASE WHEN len(string_split("Financial Codes.General Ledger Code", '-')) > 1 THEN string_split("Financial Codes.General Ledger Code", '-')[2] ELSE "Financial Codes.General Ledger Code" END)
+"""
+)
+
+print(r)
+
+# %%
+
+print(con.sql("SELECT COUNT(*) FROM clean_transactions_1"))
+
+print(con.sql("DESCRIBE clean_transactions_1"))
+
+# con.sql("COPY clean_transactions_1 TO outputFile (HEADER, DELIMITER ',');")
+
+# %%
+
+con.sql(
+    """
+UPDATE clean_transactions_1
+    SET "AcctNum" = '0' WHERE "AcctNum" = 'N/A'
+"""
+)
+
+con.commit()
+
+# %%
+
+con.sql(
+    """
+UPDATE clean_transactions_1
+SET "Transaction User Defined.Note" = lower("Transaction User Defined.Note");
+"""
+)
+
+con.commit()
+
+# %%
+
+print(con.sql("select * from clean_transactions_1 limit 5"))
+
+# %%
+
+print(
+    con.sql(
+        """select distinct "Company.Company Legal Name" from clean_transactions_1 """
+    )
+)
+
+# %%
+
+
+def check_flagged(desc: str) -> bool:
+    if any(flag in desc for flag in cleanExceptionsList):
+        return True
+    else:
+        return False
+
+
+# %%
+
+con.sql("ALTER TABLE clean_transactions_1 ADD COLUMN Flagged BOOLEAN DEFAULT False")
+
+con.commit()
+
+# %%
+
+try:
+    con.remove_function("check_flagged")
+except Exception:
+    pass
+
+con.create_function("check_flagged", check_flagged, [VARCHAR], BOOLEAN)
+
+# %%
+
+con.sql(
+    """
+UPDATE clean_transactions_1
+SET Flagged = check_flagged("Transaction User Defined.Note");
+"""
+)
+
+# %%
+
+con.commit()
+
+# %%
+
+# check_flagged("table covers for marketing events")
+
+# %%
+print("after running the set flag...")
+res = con.sql("SELECT Flagged, count(*) from clean_transactions_1 GROUP BY Flagged;")
+print(res)
+
+# %%
+
+con.sql(
+    """
+CREATE TABLE clean_transactions_2 AS 
+SELECT  t.*, a.* 
+FROM clean_transactions_1 t
+LEFT JOIN acct_number_name a
+    ON  CAST(t.AcctNum as INTEGER) = a."Account Number"
+"""
+)
+
+print(con.sql("SELECT COUNT(*) FROM clean_transactions_2"))
+
+# %%
+
+print(con.sql("DESCRIBE clean_transactions_2"))
+
+
+# %%
+
+con.sql(
+    """
+CREATE TABLE clean_transactions_3 AS 
+SELECT  t.*, cl.* 
+FROM clean_transactions_2 t
+LEFT JOIN card_limits cl
+    ON  t."Cardholder.First Name" = cl."First Name" AND t."Cardholder.Last Name" = cl."Last Name" AND t."Financial Codes.Project Code" = cl."Financial Codes.Project Code"
+"""
+)
+
+print(con.sql("SELECT COUNT(*) FROM clean_transactions_3"))
+
+
+# %%
+
+con.sql(f"""COPY clean_transactions_3 TO '{outputFile}' (HEADER, DELIMITER ',');""")
+
+# %%
+
+print(con.sql("DESCRIBE clean_transactions_3"))
+
+# %%
+
+for del_col in [
+    "Financial Codes.Cost Center Code:1",
+    "Financial Codes.Project Code:1",
+    "Company.Company Legal Name:1",
+    "Financial Codes.Project Code:2",
+    "Location Name:1",
+    "Location Category:1",
+    "Grouping:1",
+]:
+    try:
+        con.sql(f"""ALTER TABLE clean_transactions_3 DROP "{del_col}"; """)
+    except Exception:
+        pass
+
+# %%
+
+print(con.sql("SELECT COUNT(*) FROM clean_transactions_3"))
+
+con.sql(
+    """DELETE FROM clean_transactions_3 WHERE "Transaction.Merchant Name" = 'AUTOPAYMENT - THANK YOU' """
+)
+
+print(con.sql("SELECT COUNT(*) FROM clean_transactions_3"))
+
+
+# %%
+
+con.sql(f"""COPY clean_transactions_3 TO '{outputFile}' (HEADER, DELIMITER ',');""")
+
+# %%
+
+con.sql("ALTER TABLE clean_transactions_3 ADD COLUMN RULE1_GT4 BOOLEAN DEFAULT False")
+
+
+# %%
+print("after running RULE1...")
+res = con.sql(
+    "SELECT RULE1_GT4, count(*) from clean_transactions_3 GROUP BY RULE1_GT4;"
+)
+print(res)
+
+# %%
+# Rule 1 - Greater than 4 transactions in a day
+
+# Wrong results??? Seem fine...
+
+con.sql(
+    """
+UPDATE clean_transactions_3 as outertable
+SET RULE1_GT4 = True
+FROM (
+    SELECT "Transaction.Transaction Dt", "Location Name", COUNT(*) as COUNT 
+        FROM clean_transactions_3
+        GROUP BY "Transaction.Transaction Dt", "Location Name"
+        HAVING COUNT > 4
+) AS innertable
+WHERE 
+    outertable."Transaction.Transaction Dt" = innertable."Transaction.Transaction Dt" 
+    AND outertable."Location Name" = innertable."Location Name";
+"""
+)
+
+# %%
+
+con.sql(
+    """
+    SELECT "Transaction.Transaction Dt", "Location Name", COUNT(*) as COUNT 
+        FROM clean_transactions_3
+        GROUP BY "Transaction.Transaction Dt", "Location Name"
+        HAVING COUNT > 4
+        ORDER BY COUNT
+"""
+)
+
+# %%
+con.sql(
+    """
+SELECT "Transaction.Transaction Dt", "Location Name", COUNT(*)
+        FROM clean_transactions_3
+        WHERE RULE1_GT4 = True
+        GROUP BY "Transaction.Transaction Dt", "Location Name"
+        ORDER BY COUNT(*)
+"""
+)
+
+# %%
+
+print("after running RULE1...")
+res = con.sql(
+    "SELECT RULE1_GT4, count(*) from clean_transactions_3 GROUP BY RULE1_GT4;"
+)
+print(res)
+
+# %%
+
+con.sql(
+    "ALTER TABLE clean_transactions_3 ADD COLUMN RULE2_2SAMEVENDOR BOOLEAN DEFAULT False"
+)
+
+# con.sql("""
+# UPDATE clean_transactions_3 SET RULE2_2SAMEVENDOR = False
+# """)
+
+# %%
+
+con.sql(
+    """
+UPDATE clean_transactions_3 as outertable
+SET RULE2_2SAMEVENDOR = True
+FROM (
+    SELECT "Transaction.Transaction Dt", "Location Name", "Transaction.Merchant Name", COUNT(*) as COUNT 
+        FROM clean_transactions_3
+        GROUP BY "Transaction.Transaction Dt", "Location Name", "Transaction.Merchant Name"
+        HAVING COUNT > 4
+) AS innertable
+WHERE 
+    outertable."Transaction.Transaction Dt" = innertable."Transaction.Transaction Dt" 
+    AND outertable."Location Name" = innertable."Location Name"
+    AND outertable."Transaction.Merchant Name" = innertable."Transaction.Merchant Name";
+"""
+)
+
+# %%
+
+print("after running RULE2...")
+res = con.sql(
+    "SELECT RULE2_2SAMEVENDOR, count(*) from clean_transactions_3 GROUP BY RULE2_2SAMEVENDOR;"
+)
+print(res)
+
+# %%
+
+con.sql(
+    "ALTER TABLE clean_transactions_3 ADD COLUMN RULE4_SAMEDOLLAR BOOLEAN DEFAULT False"
+)
+
+# %%
+
+con.sql(
+    """
+UPDATE clean_transactions_3 as outertable
+SET RULE4_SAMEDOLLAR = True
+FROM (
+    SELECT "Transaction.Transaction Dt", "Location Name", "Transaction.Merchant Name", "Transaction Splits.Split Amount", COUNT(*) as COUNT 
+        FROM clean_transactions_3
+        GROUP BY "Transaction.Transaction Dt", "Location Name", "Transaction.Merchant Name", "Transaction Splits.Split Amount"
+        HAVING COUNT > 4
+) AS innertable
+WHERE 
+    outertable."Transaction.Transaction Dt" = innertable."Transaction.Transaction Dt" 
+    AND outertable."Location Name" = innertable."Location Name"
+    AND outertable."Transaction.Merchant Name" = innertable."Transaction.Merchant Name"
+    AND outertable."Transaction Splits.Split Amount" = innertable."Transaction Splits.Split Amount";
+"""
+)
+
+# %%
+
+print("after running RULE4...")
+res = con.sql(
+    "SELECT RULE4_SAMEDOLLAR, count(*) from clean_transactions_3 GROUP BY RULE4_SAMEDOLLAR;"
+)
+print(res)
+
+# %%
+
+# con.sql(f"""COPY clean_transactions_3 TO '{outputFile}' (HEADER, DELIMITER ',');""")
+
+
+# %%
+
+con.sql("""COPY clean_transactions_3 TO './files/test_out.csv' (HEADER, DELIMITER ',');""")
+
+# %%
+
+# out_df = con.sql("SELECT * from clean_transactions_3").df()
+
+# %%
+
+# out_df.to_excel(outputExcelFile)
+
+# %%
+
+# con.sql(""" DROP table card_limits """)
+# con.sql(""" DROP table clean_transactions_1 """)
+# con.sql(""" DROP table clean_transactions_2 """)
+# con.sql(""" DROP table clean_transactions_3 """)
